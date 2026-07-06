@@ -1,5 +1,5 @@
--- AE2 Colony diagnostic: dump what the colony_integrator sees, print it,
--- and upload it to a paste service so it can be shared as a single URL.
+-- AE2 Colony diagnostic: dump colony requests, cross-check each against the
+-- ME system, print it, and upload to a paste service as a single URL.
 local out = {}
 local function say(line)
   line = line == nil and "" or tostring(line)
@@ -8,44 +8,61 @@ local function say(line)
 end
 
 local colony = peripheral.find("colony_integrator")
-if not colony then
-  say("No colony_integrator peripheral found. Check it's attached/wired to this computer.")
-else
+local bridge = peripheral.find("me_bridge")
+
+if not colony then say("No colony_integrator peripheral found.") end
+if not bridge then say("No me_bridge peripheral found.") end
+
+if colony then
+  say("== Colony ==")
   local function try(label, fn)
     local ok, res = pcall(fn)
-    if ok then say(label .. ": " .. tostring(res))
-    else say(label .. ": <error> " .. tostring(res)) end
+    say(label .. ": " .. (ok and tostring(res) or ("<error> " .. tostring(res))))
   end
-
-  say("== Colony integrator ==")
-  try("isInColony", function() return colony.isInColony() end)
   try("colonyName", function() return colony.getColonyName() end)
   try("colonyID",   function() return colony.getColonyID() end)
+end
 
-  say("== getRequests() ==")
-  local ok, reqs = pcall(function() return colony.getRequests() end)
-  if not ok then
-    say("getRequests() threw: " .. tostring(reqs))
+-- Build a fingerprint -> stock-count index of the ME system.
+local meIndex = {}
+if bridge then
+  local ok, items = pcall(function() return bridge.getItems() end)
+  if ok and items then
+    for i = 1, #items do
+      local it = items[i]
+      if it.fingerprint then meIndex[it.fingerprint] = it end
+    end
+    say("ME system item types: " .. #items)
   else
-    local n = 0
-    for _ in pairs(reqs) do n = n + 1 end
-    say("request count: " .. n)
-    for i, r in ipairs(reqs) do
-      local item = r.items and r.items[1]
-      say(string.format("[%d] target=%s  name=%s  count=%s  item=%s",
-        i, tostring(r.target), tostring(r.name), tostring(r.count),
-        tostring(item and item.name)))
-    end
-    if n == 0 then
-      say("")
-      say("No open requests. In MineColonies this usually means the builder")
-      say("hut has no builder hired, the builder isn't actively building yet,")
-      say("or the builder already has everything it needs.")
-    end
+    say("bridge.getItems() failed: " .. tostring(items))
   end
 end
 
--- Upload the collected output to dpaste so it can be shared as one URL.
+if colony then
+  say("== Requests vs ME stock ==")
+  local ok, reqs = pcall(function() return colony.getRequests() end)
+  if ok and reqs then
+    for i, r in ipairs(reqs) do
+      local item = r.items and r.items[1]
+      local fp = item and item.fingerprint
+      local inMe = fp and meIndex[fp]
+      local status
+      if not fp then
+        status = "NO FINGERPRINT"
+      elseif inMe then
+        status = string.format("IN ME (stock %d) -> will export", inMe.count)
+      else
+        status = "NOT in ME -> needs autocraft pattern or manual"
+      end
+      say(string.format("[%d] x%s %s | %s",
+        i, tostring(r.count), tostring(item and item.name), status))
+    end
+  else
+    say("getRequests() failed: " .. tostring(reqs))
+  end
+end
+
+-- Upload collected output as a single shareable URL.
 print("")
 print("Uploading output...")
 local data = table.concat(out, "\n")
@@ -60,6 +77,5 @@ if ok and resp then
   print("Uploaded. Share this link:")
   print("  " .. url .. ".txt")
 else
-  print("Upload failed (HTTP blocked or host not allowed).")
-  print("You can read the output above instead.")
+  print("Upload failed (HTTP blocked). Read the output above instead.")
 end
