@@ -142,6 +142,8 @@ end
 
 -- [MONITOR] ----------------------------------------------------------------------------------------------------------
 local monitorLines = {}
+local recentSent = {}          -- persistent rolling history of items actually sent
+local maxRecentSent = 10       -- how many recent sends to show on the monitor
 local currentPage, totalPages = 1, 1
 local function setupMonitor()
   local monitor = peripheral.find("monitor")
@@ -172,7 +174,6 @@ local function updateMonitorGrouped(monitor)
     ["ERROR"] = {},
     ["MISSING"] = {},
     ["CRAFT"] = {},
-    ["SENT"] = {},
     ["MANUAL"] = {},
     ["INFO"] = {},
   }
@@ -183,6 +184,14 @@ local function updateMonitorGrouped(monitor)
         table.insert(groups[label], line)
         break
       end
+    end
+  end
+
+  -- Persistent "last sent" section, most recent first, shown at the top.
+  if #recentSent > 0 then
+    table.insert(flatLines, {text = "== LAST SENT (" .. #recentSent .. ") ==", color = colors.white})
+    for i = #recentSent, 1, -1 do
+      table.insert(flatLines, {text = recentSent[i], color = colorsMap.SENT or colors.lime})
     end
   end
 
@@ -262,6 +271,9 @@ local function processExportBuffer(bridge)
       logAndDisplay(string.format("[ERROR] x%d %s [%s] > %s", item.count, item.name, item.fingerprint, item.target))
     else
       logAndDisplay(string.format("[SENT] x%d %s [%s] > %s", item.count, item.name, item.fingerprint, item.target))
+      local ts = os.date("%H:%M:%S", os.epoch("local") / 1000)
+      table.insert(recentSent, string.format("[%s] x%d %s > %s", ts, item.count, item.name, item.target))
+      while #recentSent > maxRecentSent do table.remove(recentSent, 1) end
     end
   end
 end
